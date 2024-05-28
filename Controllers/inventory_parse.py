@@ -34,6 +34,22 @@ class InventoryParse:
 
         return list(set(list_item)), 200
 
+    @staticmethod
+    def get_unique_items(steam_id, id_game):
+        url = f'https://steamcommunity.com/inventory/{steam_id}/{id_game}/2?count=5000'
+        response = requests.get(url)
+        unique_items = []
+
+        if response.status_code == 200:
+            response_obj = response.json()
+            for asset in response_obj['assets']:
+                for description in response_obj['descriptions']:
+                    if asset['classid'] == description['classid']:
+                        unique_items.append(
+                            {'item': asset['classid'], 'description': description['market_hash_name'], 'asset': asset})
+                        break
+        return unique_items
+
 
 @app.route('/inventory', methods=['GET'])
 def inventory():
@@ -47,6 +63,8 @@ def inventory():
         return jsonify({'items': items})
     else:
         return jsonify({'error': items}), status_code
+
+
 
 
 

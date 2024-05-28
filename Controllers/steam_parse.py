@@ -6,7 +6,7 @@ app = Flask(__name__)
 @app.route('/resolve_vanity_url', methods=['GET'])
 def resolve_vanity_url():
     vanity_url = request.args.get('vanity_url')
-    api_key = "BE3FF8CBB4B329B4FC71DF74FA66027D"
+    api_key = "F9FD7DE3C7CA2089C9D77F05C76C3642"
     if not vanity_url:
         return jsonify({'error': 'Необходимо указать vanity_url '}), 400
 

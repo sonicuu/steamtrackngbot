@@ -6,6 +6,7 @@ import requests
 bot = telebot.TeleBot("7158930139:AAEtyFtt60Ioh5ZR1bBFwxcRI0vJtH7mpuU");
 steam_id = 0
 id_game = 0
+selected_items = []
 
 @bot.message_handler(commands=['start'])
 def handle_start(message):
@@ -59,10 +60,15 @@ def game_keyboard(message):
     keyboard.add(key_rust);
     bot.send_message(message.from_user.id, text='Какую игру вы бы хотели отслеживать?', reply_markup=keyboard)
 
+is_query_handler_active = True
 
 @bot.callback_query_handler(func=lambda call: True)
 def query_handler(call):
-    global id_game
+    global id_game, is_query_handler_active
+    # Проверяем, активен ли обработчик
+    if not is_query_handler_active:
+        return  # Прекращаем обработку, если обработчик неактивен
+
     if call.data == 'cs':
         id_game = 730
     elif call.data == 'dota':
@@ -73,52 +79,63 @@ def query_handler(call):
         id_game = 252490
 
     bot.answer_callback_query(call.id, "Выбор сделан")
-
-    game_choice(call.message)
-    bot.register_next_step_handler(call.message, game_choice)
-
-
-def item_keyboard(steam_id, id_game):
-    keyboard = types.InlineKeyboardMarkup()
-    # Отправляем HTTP запрос к Flask контроллеру
-    response = requests.get(f'http://127.0.0.1:5000/inventory?steam_id={steam_id}&id_game={id_game}')
-    if response.status_code == 200:
-        list_item = response.json().get('items', [])
-        for k, item_name in enumerate(list_item, 1):
-            keyboard.add(types.InlineKeyboardButton(text=item_name, callback_data=f'btn_game_{k}'))
-        return keyboard
-    else:
-        print(f"Ошибка при получении инвентаря: {response.status_code}")
-        return None
+    bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+    is_query_handler_active = False
+    display_inventory(call.message)
+    # Деактивируем обработчик после вызова display_inventory
 
 
-
-@bot.message_handler()
-def game_choice(message):
+def display_inventory(message):
     global steam_id, id_game
-    keyboard = item_keyboard(steam_id, id_game)
-    bot.send_message(message.chat.id, 'Выберитеtt один или несколько вариантов:', reply_markup=keyboard)
-    bot.register_next_step_handler(message, handle_query)
-
-
-selected_items = []
-
-@bot.callback_query_handler(func=lambda call: True)
-def handle_query(call):
-    print('РИВАВЫАФЫВАЫВАЫВАЫВАваьожвфоджфаожывфоаджфывоажвоыфжбдаофжывдоажывдоажфыв')
-    global selected_items
-    # Проверяем, что callback_data начинается с 'btn_game_'
     response = requests.get(f'http://127.0.0.1:5000/inventory?steam_id={steam_id}&id_game={id_game}')
     if response.status_code == 200:
-        list_item = response.json().get('items', [])
-    if call.data.startswith('btn_game_'):
-        # Получаем индекс предмета
-        item_index = int(call.data.split('_')[-1]) - 1
-        # Добавляем предмет в массив selected_items
-        selected_items.append(list_item[item_index])
-        # Отправляем уведомление пользователю о выбранном предмете
-        bot.answer_callback_query(call.id, f'Вы выбрали: {list_item[item_index]}')
-        print(f'Вы выбрали: {list_item[item_index]}')
+        inventory_items = response.json().get('items', [])
+        inventory_text = "Выберите предметы из инвентаря, введя их номера через запятую:\n"
+        inventory_text += "\n".join(f"{index+1}. {item}" for index, item in enumerate(inventory_items))
+        bot.send_message(message.chat.id, inventory_text)
+        bot.register_next_step_handler(message, handle_item_selection)
+    else:
+        bot.send_message(message.chat.id, "Ошибка при получении инвентаря.")
+
+def handle_item_selection(message):
+    global selected_items
+    # Разбираем введенные пользователем индексы и сохраняем выбранные предметы
+    try:
+        selected_indices = [int(index.strip()) for index in message.text.split(',')]
+        response = requests.get(f'http://127.0.0.1:5000/inventory?steam_id={steam_id}&id_game={id_game}')
+        if response.status_code == 200:
+            inventory_items = response.json().get('items', [])
+            selected_items = [inventory_items[index-1] for index in selected_indices if 0 < index <= len(inventory_items)]
+            selected_items_text = "Вы выбрали следующие предметы:\n" + "\n".join(selected_items)
+            bot.send_message(message.chat.id, selected_items_text)
+        else:
+            bot.send_message(message.chat.id, "Ошибка при получении инвентаря.")
+    except ValueError:
+        bot.send_message(message.chat.id, "Пожалуйста, введите корректные номера предметов.")
+    # Запуск потока для отправки цен
+    price_thread = threading.Thread(target=send_prices, args=(message,))
+    price_thread.start()
+import random
+import time
+import threading
+
+# Функция для отправки цен на выбранные предметы
+def send_prices(message):
+    while True:
+        try:
+            # Случайная задержка от 16 до 32 секунд
+            time.sleep(random.randint(16, 32))
+            for item in selected_items:
+                # Запрос к контроллеру Flask для получения цены предмета
+                response = requests.get(f'http://127.0.0.1:5000/get_price?item_name={item}&app_id={id_game}')
+                if response.status_code == 200:
+                    price_info = response.json()
+                    bot.send_message(message.chat.id, f"Цена на '{price_info['item_name']}': {price_info['lowest_price']}")
+                else:
+                    bot.send_message(message.chat.id, "Ошибка при получении цены предмета.")
+        except Exception as e:
+            print(f"Произошла ошибка: {e}")
+
 
 
 
