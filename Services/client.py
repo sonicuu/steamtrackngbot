@@ -2,6 +2,10 @@ import re
 from telebot import types
 import telebot
 import requests
+import random
+import time
+import threading
+
 
 bot = telebot.TeleBot("7158930139:AAEtyFtt60Ioh5ZR1bBFwxcRI0vJtH7mpuU");
 steam_id = 0
@@ -115,9 +119,6 @@ def handle_item_selection(message):
     # Запуск потока для отправки цен
     price_thread = threading.Thread(target=send_prices, args=(message,))
     price_thread.start()
-import random
-import time
-import threading
 
 # Функция для отправки цен на выбранные предметы
 def send_prices(message):
