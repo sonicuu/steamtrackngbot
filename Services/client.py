@@ -5,12 +5,17 @@ import requests
 import random
 import time
 import threading
+from Services.users import Users
 
 
 bot = telebot.TeleBot("7158930139:AAEtyFtt60Ioh5ZR1bBFwxcRI0vJtH7mpuU");
-steam_id = 0
-id_game = 0
-selected_items = []
+# steam_id = None
+# id_game = None
+# selected_items = []
+is_query_handler_active = True
+
+serviceUser = Users()
+
 
 @bot.message_handler(commands=['start'])
 def handle_start(message):
@@ -42,7 +47,9 @@ def check_message_for_url(message):
             steam_id = url_list[-1]
             print(url_list[-1])
 
-        bot.register_next_step_handler(message, game_keyboard)
+        if steam_id:
+            serviceUser.save_user_data(message.chat.id, steam_id, None, None)
+        # bot.register_next_step_handler(message, game_keyboard)
         game_keyboard(message)
 
     else:
@@ -94,10 +101,10 @@ def display_inventory(message):
     response = requests.get(f'http://127.0.0.1:5000/inventory?steam_id={steam_id}&id_game={id_game}')
     if response.status_code == 200:
         inventory_items = response.json().get('items', [])
-        inventory_text = "Выберите предметы из инвентаря, введя их номера через запятую:\n"
-        inventory_text += "\n".join(f"{index+1}. {item}" for index, item in enumerate(inventory_items))
+        inventory_text = "\n".join(f"{index+1}. {item}" for index, item in enumerate(inventory_items))
         bot.send_message(message.chat.id, inventory_text)
         bot.register_next_step_handler(message, handle_item_selection)
+        bot.send_message(message.chat.id, "Выберите предметы из инвентаря, введя их номера через запятую:\n")
     else:
         bot.send_message(message.chat.id, "Ошибка при получении инвентаря.")
 
