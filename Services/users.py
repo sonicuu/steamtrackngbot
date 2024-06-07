@@ -27,18 +27,21 @@ class Users:
         self.conn.commit()
 
     def save_user_data(self, chat_id, steam_id, selected_game, selected_items):
+
         self.cursor.execute('''
             INSERT OR REPLACE INTO users (chat_id, steam_id, selected_game, selected_items)
             VALUES (?, ?, ?, ?)
         ''', (chat_id, steam_id, selected_game, selected_items))
+
         self.conn.commit()
 
     def get_user_data(self, chat_id):
         self.cursor.execute('SELECT * FROM users WHERE chat_id = ?', (chat_id,))
         row = self.cursor.fetchone()
         if row:
-            return row[1], row[2], row[3].split(',')
-        return None, None, []
+            return row[0], row[1], row[2], row[3]
+        return None, None, None, []
 
-# Пример использования
-serviceUser = Users()
+    def delete_user_data(self, chat_id):
+        self.cursor.execute('DELETE FROM users WHERE chat_id = ?', (chat_id,))
+        self.conn.commit()

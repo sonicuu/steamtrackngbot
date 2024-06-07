@@ -55,6 +55,7 @@ class InventoryParse:
 def inventory():
     steam_id = request.args.get('steam_id')
     id_game = request.args.get('id_game')
+
     if not steam_id or not id_game:
         return jsonify({'error': 'Необходимо указать steam_id и id_game'}), 400
 

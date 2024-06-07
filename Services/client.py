@@ -9,26 +9,54 @@ from Services.users import Users
 
 
 bot = telebot.TeleBot("7158930139:AAEtyFtt60Ioh5ZR1bBFwxcRI0vJtH7mpuU");
-# steam_id = None
-# id_game = None
-# selected_items = []
-is_query_handler_active = True
+user_stop_flags = {}
+# user_stop_flags = {id: [stop_flag, is_query_handler_active]}
 
 serviceUser = Users()
 
 
 @bot.message_handler(commands=['start'])
 def handle_start(message):
-    bot.send_message(message.chat.id, "Здравстуйте, отправьте ссылку на ваш профиль стим. Предварительно откройте свой инвентарь стим.")
+    global user_stop_flags
+    menu(message)
+    if serviceUser.get_user_data(message.chat.id) != (None, None, None, []):
+        serviceUser.delete_user_data(message.chat.id)
+
+
+    user_stop_flags[message.chat.id] = [False, True]
     bot.register_next_step_handler(message, check_message_for_url)
+
+@bot.message_handler(commands=['stop'])
+def handle_stop(message):
+    global user_stop_flags
+    if user_stop_flags!={}:
+        user_stop_flags[message.chat.id][0] = False
+        print(user_stop_flags)
+        bot.send_message(message.chat.id, "Бот остановлен. Для начала новой сессии используйте команду /start.")
+
+def menu(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    btn_start = types.KeyboardButton('Старт')
+    btn_stop = types.KeyboardButton('Стоп')
+    markup.add(btn_start, btn_stop)
+    bot.send_message(message.chat.id, text="Здравстуйте, отправьте ссылку на ваш профиль стим. Предварительно откройте свой инвентарь стим.", reply_markup=markup)
+
+@bot.message_handler(func=lambda message: True)
+def handle_message(message):
+    if message.text == 'Старт':
+        handle_start(message)
+    elif message.text == 'Стоп':
+        handle_stop(message)
 
 
 
 def check_message_for_url(message):
-    global steam_id
+    global user_stop_flags
+
+    _, steam_id, _, _ = serviceUser.get_user_data(message.chat.id)
+
     url_pattern = re.compile(r'https?://steamcommunity.com/\S+')
     url_list = list(filter(None, str(message.text).split('/')))
-    print(url_list)
 
     url = re.search(url_pattern, message.text)
     if url:
@@ -39,17 +67,15 @@ def check_message_for_url(message):
             response = requests.get(f'http://127.0.0.1:5000/resolve_vanity_url?vanity_url={url_list[-1]}')
             if response.status_code == 200:
                 steam_id = response.json().get('steam_id')
-                print(f"SteamID: {steam_id}")
+                serviceUser.save_user_data(message.chat.id, steam_id, None, None)
             else:
                 bot.reply_to(message, "Ошибка при получении SteamID")
 
         elif url_list[-2] == "profiles":
             steam_id = url_list[-1]
+            serviceUser.save_user_data(message.chat.id, steam_id, None, None)
             print(url_list[-1])
 
-        if steam_id:
-            serviceUser.save_user_data(message.chat.id, steam_id, None, None)
-        # bot.register_next_step_handler(message, game_keyboard)
         game_keyboard(message)
 
     else:
@@ -58,7 +84,6 @@ def check_message_for_url(message):
 
 
 def game_keyboard(message):
-
     keyboard = types.InlineKeyboardMarkup();
     key_cs = types.InlineKeyboardButton(text='Counter-Strike 2', callback_data='cs');
     key_dota = types.InlineKeyboardButton(text='Dota 2', callback_data='dota');
@@ -69,15 +94,15 @@ def game_keyboard(message):
     keyboard.add(key_dota);
     keyboard.add(key_tf);
     keyboard.add(key_rust);
-    bot.send_message(message.from_user.id, text='Какую игру вы бы хотели отслеживать?', reply_markup=keyboard)
+    bot.send_message(message.chat.id, text='Какую игру вы бы хотели отслеживать?', reply_markup=keyboard)
 
-is_query_handler_active = True
 
 @bot.callback_query_handler(func=lambda call: True)
 def query_handler(call):
-    global id_game, is_query_handler_active
+    global user_stop_flags
     # Проверяем, активен ли обработчик
-    if not is_query_handler_active:
+    if not user_stop_flags[call.message.chat.id][1]:
+
         return  # Прекращаем обработку, если обработчик неактивен
 
     if call.data == 'cs':
@@ -90,59 +115,108 @@ def query_handler(call):
         id_game = 252490
 
     bot.answer_callback_query(call.id, "Выбор сделан")
-    bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
-    is_query_handler_active = False
+    chat_id, steam_id, _, _ = serviceUser.get_user_data(call.message.chat.id)
+    serviceUser.save_user_data(chat_id, steam_id, id_game, None)
+
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    # bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+    user_stop_flags[call.message.chat.id][1] = False
     display_inventory(call.message)
     # Деактивируем обработчик после вызова display_inventory
 
 
 def display_inventory(message):
-    global steam_id, id_game
+    global user_stop_flags
+    _, steam_id, id_game, _ = serviceUser.get_user_data(message.chat.id)
     response = requests.get(f'http://127.0.0.1:5000/inventory?steam_id={steam_id}&id_game={id_game}')
-    if response.status_code == 200:
+
+    if response.status_code == 200 and response.json()['items']!=[]:
         inventory_items = response.json().get('items', [])
-        inventory_text = "\n".join(f"{index+1}. {item}" for index, item in enumerate(inventory_items))
-        bot.send_message(message.chat.id, inventory_text)
+
+        inventory_items = [f"{i+1}. {k}\n" for i,k in enumerate(inventory_items)]
+        inventory_text = ""
+        arr = []
+        for i in inventory_items:
+            if len(inventory_text+i)>4096:
+                arr.append(inventory_text)
+                inventory_text = ""
+            inventory_text+=i
+            if i == inventory_items[-1]:
+                arr.append(inventory_text)
+        {bot.send_message(chat_id=message.chat.id, text=i) for i in arr}
+
+
         bot.register_next_step_handler(message, handle_item_selection)
         bot.send_message(message.chat.id, "Выберите предметы из инвентаря, введя их номера через запятую:\n")
     else:
-        bot.send_message(message.chat.id, "Ошибка при получении инвентаря.")
+        bot.send_message(message.chat.id, "Инвентарь данной игры пуст.")
+        user_stop_flags[message.chat.id][1] = True
+        game_keyboard(message)
+
 
 def handle_item_selection(message):
-    global selected_items
+    global user_stop_flags
+    _, steam_id, id_game, _ = serviceUser.get_user_data(message.chat.id)
     # Разбираем введенные пользователем индексы и сохраняем выбранные предметы
     try:
         selected_indices = [int(index.strip()) for index in message.text.split(',')]
+
         response = requests.get(f'http://127.0.0.1:5000/inventory?steam_id={steam_id}&id_game={id_game}')
         if response.status_code == 200:
             inventory_items = response.json().get('items', [])
             selected_items = [inventory_items[index-1] for index in selected_indices if 0 < index <= len(inventory_items)]
             selected_items_text = "Вы выбрали следующие предметы:\n" + "\n".join(selected_items)
             bot.send_message(message.chat.id, selected_items_text)
+            selected_price_items = []
+            for item in selected_items:
+                response = requests.get(f'http://127.0.0.1:5000/get_price?item_name={item}&app_id={id_game}')
+                price_info = response.json()
+                selected_price_items.append(f"{price_info['item_name']}_{price_info['lowest_price']}")
+                serviceUser.save_user_data(message.chat.id, steam_id, id_game, ";".join(selected_price_items))
+
         else:
             bot.send_message(message.chat.id, "Ошибка при получении инвентаря.")
     except ValueError:
         bot.send_message(message.chat.id, "Пожалуйста, введите корректные номера предметов.")
-    # Запуск потока для отправки цен
-    price_thread = threading.Thread(target=send_prices, args=(message,))
-    price_thread.start()
+    user_stop_flags[message.chat.id][0] = True
+    send_prices(message)
 
 # Функция для отправки цен на выбранные предметы
 def send_prices(message):
+    global user_stop_flags
+    _, _, id_game, selected_items = serviceUser.get_user_data(message.chat.id)
+
+    if selected_items != None:
+        selected_items = selected_items.split(';')
+        selected_items = [i.split("_") for i in selected_items]
+        print(selected_items)
+        for i in selected_items:
+            i[1]=i[1].replace(",", ".", 1)
+            i[1]=float(i[1].replace(" pуб.", "", 1))
+
+        print(selected_items)
+
     while True:
+        if not user_stop_flags[message.chat.id][0]:
+            break
         try:
             # Случайная задержка от 16 до 32 секунд
             time.sleep(random.randint(16, 32))
+
             for item in selected_items:
                 # Запрос к контроллеру Flask для получения цены предмета
-                response = requests.get(f'http://127.0.0.1:5000/get_price?item_name={item}&app_id={id_game}')
-                if response.status_code == 200:
+                response = requests.get(f'http://127.0.0.1:5000/get_price?item_name={item[0]}&app_id={id_game}')
+                if response.status_code == 200 and user_stop_flags[message.chat.id][0]:
                     price_info = response.json()
                     bot.send_message(message.chat.id, f"Цена на '{price_info['item_name']}': {price_info['lowest_price']}")
-                else:
-                    bot.send_message(message.chat.id, "Ошибка при получении цены предмета.")
+
+
+
         except Exception as e:
             print(f"Произошла ошибка: {e}")
+
+
+
 
 
 

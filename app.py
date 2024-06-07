@@ -1,6 +1,3 @@
-import subprocess
-
-import telebot
 from flask import Flask, request
 from Controllers.price_tracker import get_price
 from Controllers.inventory_parse import inventory
