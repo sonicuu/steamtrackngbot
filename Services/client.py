@@ -131,8 +131,8 @@ def display_inventory(message):
     response = requests.get(f'http://127.0.0.1:5000/inventory?steam_id={steam_id}&id_game={id_game}')
 
     if response.status_code == 200 and response.json()['items']!=[]:
-        inventory_items = response.json().get('items', [])
 
+        inventory_items = response.json().get('items', [])
         inventory_items = [f"{i+1}. {k}\n" for i,k in enumerate(inventory_items)]
         inventory_text = ""
         arr = []
@@ -160,19 +160,23 @@ def handle_item_selection(message):
     # Разбираем введенные пользователем индексы и сохраняем выбранные предметы
     try:
         selected_indices = [int(index.strip()) for index in message.text.split(',')]
-
+        selected_indices = list(set(selected_indices))
         response = requests.get(f'http://127.0.0.1:5000/inventory?steam_id={steam_id}&id_game={id_game}')
         if response.status_code == 200:
             inventory_items = response.json().get('items', [])
-            selected_items = [inventory_items[index-1] for index in selected_indices if 0 < index <= len(inventory_items)]
-            selected_items_text = "Вы выбрали следующие предметы:\n" + "\n".join(selected_items)
-            bot.send_message(message.chat.id, selected_items_text)
-            selected_price_items = []
-            for item in selected_items:
-                response = requests.get(f'http://127.0.0.1:5000/get_price?item_name={item}&app_id={id_game}')
-                price_info = response.json()
-                selected_price_items.append(f"{price_info['item_name']}_{price_info['lowest_price']}")
-                serviceUser.save_user_data(message.chat.id, steam_id, id_game, ";".join(selected_price_items))
+            if selected_indices[0] > len(inventory_items):
+                bot.send_message(message.chat.id, f'Вы ввели неправильный(ые) индекс(ы)!')
+                user_stop_flags[message.chat.id][0] = False
+            else:
+                selected_items = [inventory_items[index-1] for index in selected_indices if 0 < index <= len(inventory_items)]
+                selected_items_text = "Вы выбрали следующие предметы:\n" + "\n".join(selected_items)
+                bot.send_message(message.chat.id, selected_items_text)
+                selected_price_items = []
+                for item in selected_items:
+                    response = requests.get(f'http://127.0.0.1:5000/get_price?item_name={item}&app_id={id_game}')
+                    price_info = response.json()
+                    selected_price_items.append(f"{price_info['item_name']}_{price_info['lowest_price']}")
+                    serviceUser.save_user_data(message.chat.id, steam_id, id_game, ";".join(selected_price_items))
 
         else:
             bot.send_message(message.chat.id, "Ошибка при получении инвентаря.")
@@ -186,40 +190,51 @@ def send_prices(message):
     global user_stop_flags
     _, _, id_game, selected_items = serviceUser.get_user_data(message.chat.id)
 
-    if selected_items != None:
-        selected_items = selected_items.split(';')
-        selected_items = [i.split("_") for i in selected_items]
-        print(selected_items)
-        for i in selected_items:
-            i[1]=i[1].replace(",", ".", 1)
-            i[1]=float(i[1].replace(" pуб.", "", 1))
+    try:
+        if selected_items != None:
+            selected_items = selected_items.split(';')
+            selected_items = [i.split("_") for i in selected_items]
+            print(selected_items)
+            for i in selected_items:
+                i[1]=i[1].replace(",", ".", 1)
+                i[1]=float(i[1].replace(" pуб.", "", 1))
 
-        print(selected_items)
+            items_dict = {item[0]: item[1] for item in selected_items}
 
+        print(items_dict)
+    except UnboundLocalError:
+        bot.send_message(message.chat.id, f'Попробуйте еще раз (команда Старт).')
+        user_stop_flags[message.chat.id][0] = False
     while True:
         if not user_stop_flags[message.chat.id][0]:
             break
         try:
             # Случайная задержка от 16 до 32 секунд
-            time.sleep(random.randint(16, 32))
+            time.sleep(random.randint(5, 6))
 
-            for item in selected_items:
+            for item, value in items_dict.items():
+                print(item, value)
                 # Запрос к контроллеру Flask для получения цены предмета
-                response = requests.get(f'http://127.0.0.1:5000/get_price?item_name={item[0]}&app_id={id_game}')
+                response = requests.get(f'http://127.0.0.1:5000/get_price?item_name={item}&app_id={id_game}')
                 if response.status_code == 200 and user_stop_flags[message.chat.id][0]:
-                    price_info = response.json()
-                    bot.send_message(message.chat.id, f"Цена на '{price_info['item_name']}': {price_info['lowest_price']}")
-
-
-
+                    old_price = value
+                    new_price_request = response.json()
+                    new_price = new_price_request['lowest_price']
+                    new_price = new_price.replace(",", ".", 1)
+                    new_price = float(new_price.replace(" pуб.", "", 1))
+                    if ((new_price - old_price) / old_price) * 100 >= 10:
+                        bot.send_message(message.chat.id,
+                                         f"Поздравляем! Цена вашего предмета {item} увеличилась c {old_price} руб. до {new_price} руб. ({new_price-old_price} руб. прибыли)")
+                        items_dict[item] = new_price
+                    elif ((new_price - old_price) / old_price) * 100 <= -10:
+                        bot.send_message(message.chat.id,
+                                         f"Сожалеем... Цена предмета {item} уменьшилась c {old_price} руб. до {new_price} руб. ({abs(new_price-old_price)} руб. убытков)")
+                        items_dict[item] = new_price
+                    else:
+                        bot.send_message(message.chat.id,
+                                         f"Тест: Цена предмета {item}: старая ({old_price}), новая ({new_price}), разница ({abs(new_price - old_price)})")
         except Exception as e:
             print(f"Произошла ошибка: {e}")
-
-
-
-
-
-
 
 
 bot.polling(none_stop=True)
